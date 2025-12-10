@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const { body, validationResult } = require('express-validator');
-const { getPool, sql } = require('../config/database');
+const { getPool } = require('../config/database');
 const { authenticateToken, requireManager } = require('../middleware/auth');
 
 // Get all employees (with search and filter)
@@ -12,27 +12,31 @@ router.get('/', authenticateToken, requireManager, async (req, res) => {
         const pool = await getPool();
 
         let query = 'SELECT employee_id, fio, email, phone, hire_date, active, role FROM Employee WHERE 1=1';
-        const request = pool.request();
+        const params = [];
+        let paramIndex = 1;
 
         if (search) {
-            query += ' AND (fio LIKE @search OR email LIKE @search)';
-            request.input('search', sql.VarChar, `%${search}%`);
+            query += ` AND (fio ILIKE $${paramIndex} OR email ILIKE $${paramIndex})`;
+            params.push(`%${search}%`);
+            paramIndex++;
         }
 
         if (active !== undefined) {
-            query += ' AND active = @active';
-            request.input('active', sql.Bit, active === 'true' ? 1 : 0);
+            query += ` AND active = $${paramIndex}`;
+            params.push(active === 'true');
+            paramIndex++;
         }
 
         if (role) {
-            query += ' AND role = @role';
-            request.input('role', sql.VarChar, role);
+            query += ` AND role = $${paramIndex}`;
+            params.push(role);
+            paramIndex++;
         }
 
         query += ' ORDER BY fio';
 
-        const result = await request.query(query);
-        res.json(result.recordset);
+        const result = await pool.query(query, params);
+        res.json(result.rows);
     } catch (err) {
         console.error('Get employees error:', err);
         res.status(500).json({ error: 'Ошибка получения списка сотрудников' });
@@ -43,15 +47,16 @@ router.get('/', authenticateToken, requireManager, async (req, res) => {
 router.get('/:id', authenticateToken, async (req, res) => {
     try {
         const pool = await getPool();
-        const result = await pool.request()
-            .input('employee_id', sql.Int, req.params.id)
-            .query('SELECT employee_id, fio, email, phone, hire_date, active, role FROM Employee WHERE employee_id = @employee_id');
+        const result = await pool.query(
+            'SELECT employee_id, fio, email, phone, hire_date, active, role FROM Employee WHERE employee_id = $1',
+            [req.params.id]
+        );
 
-        if (result.recordset.length === 0) {
+        if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Сотрудник не найден' });
         }
 
-        res.json(result.recordset[0]);
+        res.json(result.rows[0]);
     } catch (err) {
         console.error('Get employee error:', err);
         res.status(500).json({ error: 'Ошибка получения данных сотрудника' });
@@ -76,36 +81,27 @@ router.post('/', authenticateToken, requireManager, [
         const pool = await getPool();
 
         // Check if email already exists
-        const existingUser = await pool.request()
-            .input('email', sql.VarChar, email)
-            .query('SELECT employee_id FROM Employee WHERE email = @email');
+        const existingUser = await pool.query(
+            'SELECT employee_id FROM Employee WHERE email = $1',
+            [email]
+        );
 
-        if (existingUser.recordset.length > 0) {
+        if (existingUser.rows.length > 0) {
             return res.status(400).json({ error: 'Пользователь с таким email уже существует' });
         }
 
-        // Get next ID
-        const maxIdResult = await pool.request()
-            .query('SELECT ISNULL(MAX(employee_id), 0) + 1 as next_id FROM Employee');
-        const nextId = maxIdResult.recordset[0].next_id;
-
         const passwordHash = await bcrypt.hash(password, 10);
 
-        await pool.request()
-            .input('employee_id', sql.Int, nextId)
-            .input('fio', sql.VarChar, fio)
-            .input('email', sql.VarChar, email)
-            .input('phone', sql.VarChar, phone)
-            .input('hire_date', sql.DateTime, new Date())
-            .input('active', sql.Bit, 1)
-            .input('role', sql.VarChar, role)
-            .input('password_hash', sql.VarChar, passwordHash)
-            .query(`INSERT INTO Employee (employee_id, fio, email, phone, hire_date, active, role, password_hash)
-                    VALUES (@employee_id, @fio, @email, @phone, @hire_date, @active, @role, @password_hash)`);
+        const result = await pool.query(
+            `INSERT INTO Employee (fio, email, phone, hire_date, active, role, password_hash)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING employee_id`,
+            [fio, email, phone, new Date(), true, role, passwordHash]
+        );
 
         res.status(201).json({
             message: 'Сотрудник успешно создан',
-            employee_id: nextId
+            employee_id: result.rows[0].employee_id
         });
     } catch (err) {
         console.error('Create employee error:', err);
@@ -130,54 +126,59 @@ router.put('/:id', authenticateToken, requireManager, [
         const pool = await getPool();
 
         // Check if employee exists
-        const existing = await pool.request()
-            .input('employee_id', sql.Int, req.params.id)
-            .query('SELECT employee_id FROM Employee WHERE employee_id = @employee_id');
+        const existing = await pool.query(
+            'SELECT employee_id FROM Employee WHERE employee_id = $1',
+            [req.params.id]
+        );
 
-        if (existing.recordset.length === 0) {
+        if (existing.rows.length === 0) {
             return res.status(404).json({ error: 'Сотрудник не найден' });
         }
 
         // Check if email is taken by another user
         if (email) {
-            const emailCheck = await pool.request()
-                .input('email', sql.VarChar, email)
-                .input('employee_id', sql.Int, req.params.id)
-                .query('SELECT employee_id FROM Employee WHERE email = @email AND employee_id != @employee_id');
+            const emailCheck = await pool.query(
+                'SELECT employee_id FROM Employee WHERE email = $1 AND employee_id != $2',
+                [email, req.params.id]
+            );
 
-            if (emailCheck.recordset.length > 0) {
+            if (emailCheck.rows.length > 0) {
                 return res.status(400).json({ error: 'Email уже используется другим пользователем' });
             }
         }
 
-        let updateQuery = 'UPDATE Employee SET ';
         const updates = [];
-        const request = pool.request();
-        request.input('employee_id', sql.Int, req.params.id);
+        const params = [];
+        let paramIndex = 1;
 
         if (fio) {
-            updates.push('fio = @fio');
-            request.input('fio', sql.VarChar, fio);
+            updates.push(`fio = $${paramIndex}`);
+            params.push(fio);
+            paramIndex++;
         }
         if (email) {
-            updates.push('email = @email');
-            request.input('email', sql.VarChar, email);
+            updates.push(`email = $${paramIndex}`);
+            params.push(email);
+            paramIndex++;
         }
         if (phone) {
-            updates.push('phone = @phone');
-            request.input('phone', sql.VarChar, phone);
+            updates.push(`phone = $${paramIndex}`);
+            params.push(phone);
+            paramIndex++;
         }
         if (role) {
-            updates.push('role = @role');
-            request.input('role', sql.VarChar, role);
+            updates.push(`role = $${paramIndex}`);
+            params.push(role);
+            paramIndex++;
         }
 
         if (updates.length === 0) {
             return res.status(400).json({ error: 'Нет данных для обновления' });
         }
 
-        updateQuery += updates.join(', ') + ' WHERE employee_id = @employee_id';
-        await request.query(updateQuery);
+        params.push(req.params.id);
+        const updateQuery = `UPDATE Employee SET ${updates.join(', ')} WHERE employee_id = $${paramIndex}`;
+        await pool.query(updateQuery, params);
 
         res.json({ message: 'Данные сотрудника обновлены' });
     } catch (err) {
@@ -191,11 +192,12 @@ router.patch('/:id/deactivate', authenticateToken, requireManager, async (req, r
     try {
         const pool = await getPool();
 
-        const result = await pool.request()
-            .input('employee_id', sql.Int, req.params.id)
-            .query('UPDATE Employee SET active = 0 WHERE employee_id = @employee_id');
+        const result = await pool.query(
+            'UPDATE Employee SET active = FALSE WHERE employee_id = $1',
+            [req.params.id]
+        );
 
-        if (result.rowsAffected[0] === 0) {
+        if (result.rowCount === 0) {
             return res.status(404).json({ error: 'Сотрудник не найден' });
         }
 
@@ -211,11 +213,12 @@ router.patch('/:id/activate', authenticateToken, requireManager, async (req, res
     try {
         const pool = await getPool();
 
-        const result = await pool.request()
-            .input('employee_id', sql.Int, req.params.id)
-            .query('UPDATE Employee SET active = 1 WHERE employee_id = @employee_id');
+        const result = await pool.query(
+            'UPDATE Employee SET active = TRUE WHERE employee_id = $1',
+            [req.params.id]
+        );
 
-        if (result.rowsAffected[0] === 0) {
+        if (result.rowCount === 0) {
             return res.status(404).json({ error: 'Сотрудник не найден' });
         }
 

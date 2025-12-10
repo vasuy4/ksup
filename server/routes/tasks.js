@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { body, validationResult } = require('express-validator');
-const { getPool, sql } = require('../config/database');
+const { getPool } = require('../config/database');
 const { authenticateToken, requireManager } = require('../middleware/auth');
 
 // Get all tasks (with filters)
@@ -18,38 +18,44 @@ router.get('/', authenticateToken, async (req, res) => {
             LEFT JOIN Project p ON t.project_id = p.project_id
             LEFT JOIN Status s ON t.status_id = s.status_id
             WHERE 1=1`;
-        const request = pool.request();
+        const params = [];
+        let paramIndex = 1;
 
         // If user is Исполнитель, only show assigned tasks
         if (req.user.role === 'Исполнитель') {
-            query += ` AND t.task_id IN (SELECT task_id FROM Assignment WHERE employee_id = @employee_id)`;
-            request.input('employee_id', sql.Int, req.user.employee_id);
+            query += ` AND t.task_id IN (SELECT task_id FROM Assignment WHERE employee_id = $${paramIndex})`;
+            params.push(req.user.employee_id);
+            paramIndex++;
         }
 
         if (project_id) {
-            query += ' AND t.project_id = @project_id';
-            request.input('project_id', sql.Int, parseInt(project_id));
+            query += ` AND t.project_id = $${paramIndex}`;
+            params.push(parseInt(project_id));
+            paramIndex++;
         }
 
         if (status_id) {
-            query += ' AND t.status_id = @status_id';
-            request.input('status_id', sql.Int, parseInt(status_id));
+            query += ` AND t.status_id = $${paramIndex}`;
+            params.push(parseInt(status_id));
+            paramIndex++;
         }
 
         if (search) {
-            query += ' AND (t.name LIKE @search OR t.description LIKE @search)';
-            request.input('search', sql.VarChar, `%${search}%`);
+            query += ` AND (t.name ILIKE $${paramIndex} OR t.description ILIKE $${paramIndex})`;
+            params.push(`%${search}%`);
+            paramIndex++;
         }
 
         if (assigned_to) {
-            query += ' AND t.task_id IN (SELECT task_id FROM Assignment WHERE employee_id = @assigned_to)';
-            request.input('assigned_to', sql.Int, parseInt(assigned_to));
+            query += ` AND t.task_id IN (SELECT task_id FROM Assignment WHERE employee_id = $${paramIndex})`;
+            params.push(parseInt(assigned_to));
+            paramIndex++;
         }
 
         query += ' ORDER BY t.priority DESC, t.start_plan';
 
-        const result = await request.query(query);
-        res.json(result.recordset);
+        const result = await pool.query(query, params);
+        res.json(result.rows);
     } catch (err) {
         console.error('Get tasks error:', err);
         res.status(500).json({ error: 'Ошибка получения списка задач' });
@@ -61,28 +67,27 @@ router.get('/project/:projectId/kanban', authenticateToken, async (req, res) => 
     try {
         const pool = await getPool();
 
-        const result = await pool.request()
-            .input('project_id', sql.Int, req.params.projectId)
-            .query(`
-                SELECT t.*, s.name as status_name,
-                    (SELECT STRING_AGG(e.fio, ', ') FROM Assignment a
-                        JOIN Employee e ON a.employee_id = e.employee_id
-                        WHERE a.task_id = t.task_id) as assignees,
-                    (SELECT ISNULL(SUM(te.hours), 0) FROM Time_entry te
-                        JOIN Assignment a ON te.assignment_id = a.assignment_id
-                        WHERE a.task_id = t.task_id) as hours_spent
-                FROM Task t
-                LEFT JOIN Status s ON t.status_id = s.status_id
-                WHERE t.project_id = @project_id
-                ORDER BY t.priority DESC, t.start_plan
-            `);
+        const result = await pool.query(
+            `SELECT t.*, s.name as status_name,
+                (SELECT STRING_AGG(e.fio, ', ') FROM Assignment a
+                    JOIN Employee e ON a.employee_id = e.employee_id
+                    WHERE a.task_id = t.task_id) as assignees,
+                (SELECT COALESCE(SUM(te.hours), 0) FROM Time_entry te
+                    JOIN Assignment a ON te.assignment_id = a.assignment_id
+                    WHERE a.task_id = t.task_id) as hours_spent
+            FROM Task t
+            LEFT JOIN Status s ON t.status_id = s.status_id
+            WHERE t.project_id = $1
+            ORDER BY t.priority DESC, t.start_plan`,
+            [req.params.projectId]
+        );
 
         // Group by status
-        const statuses = await pool.request().query('SELECT * FROM Status ORDER BY status_id');
+        const statuses = await pool.query('SELECT * FROM Status ORDER BY status_id');
         const kanban = {};
 
-        statuses.recordset.forEach(status => {
-            kanban[status.name] = result.recordset.filter(task => task.status_name === status.name);
+        statuses.rows.forEach(status => {
+            kanban[status.name] = result.rows.filter(task => task.status_name === status.name);
         });
 
         res.json(kanban);
@@ -96,30 +101,32 @@ router.get('/project/:projectId/kanban', authenticateToken, async (req, res) => 
 router.get('/:id', authenticateToken, async (req, res) => {
     try {
         const pool = await getPool();
-        const result = await pool.request()
-            .input('task_id', sql.Int, req.params.id)
-            .query(`SELECT t.*, p.name as project_name, s.name as status_name,
-                (SELECT ISNULL(SUM(te.hours), 0) FROM Time_entry te
+        const result = await pool.query(
+            `SELECT t.*, p.name as project_name, s.name as status_name,
+                (SELECT COALESCE(SUM(te.hours), 0) FROM Time_entry te
                     JOIN Assignment a ON te.assignment_id = a.assignment_id
                     WHERE a.task_id = t.task_id) as hours_spent
-                FROM Task t
-                LEFT JOIN Project p ON t.project_id = p.project_id
-                LEFT JOIN Status s ON t.status_id = s.status_id
-                WHERE t.task_id = @task_id`);
+            FROM Task t
+            LEFT JOIN Project p ON t.project_id = p.project_id
+            LEFT JOIN Status s ON t.status_id = s.status_id
+            WHERE t.task_id = $1`,
+            [req.params.id]
+        );
 
-        if (result.recordset.length === 0) {
+        if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Задача не найдена' });
         }
 
         // Get assignments
-        const assignments = await pool.request()
-            .input('task_id', sql.Int, req.params.id)
-            .query(`SELECT a.*, e.fio, e.email FROM Assignment a
-                JOIN Employee e ON a.employee_id = e.employee_id
-                WHERE a.task_id = @task_id`);
+        const assignments = await pool.query(
+            `SELECT a.*, e.fio, e.email FROM Assignment a
+             JOIN Employee e ON a.employee_id = e.employee_id
+             WHERE a.task_id = $1`,
+            [req.params.id]
+        );
 
-        const task = result.recordset[0];
-        task.assignments = assignments.recordset;
+        const task = result.rows[0];
+        task.assignments = assignments.rows;
 
         res.json(task);
     } catch (err) {
@@ -147,44 +154,33 @@ router.post('/', authenticateToken, requireManager, [
         const pool = await getPool();
 
         // Check if project exists and not archived
-        const project = await pool.request()
-            .input('project_id', sql.Int, project_id)
-            .query('SELECT project_id, is_archived FROM Project WHERE project_id = @project_id');
+        const project = await pool.query(
+            'SELECT project_id, is_archived FROM Project WHERE project_id = $1',
+            [project_id]
+        );
 
-        if (project.recordset.length === 0) {
+        if (project.rows.length === 0) {
             return res.status(404).json({ error: 'Проект не найден' });
         }
 
-        if (project.recordset[0].is_archived) {
+        if (project.rows[0].is_archived) {
             return res.status(400).json({ error: 'Нельзя создать задачу в архивном проекте' });
         }
 
         // Get default status (Создана)
-        const status = await pool.request()
-            .query("SELECT status_id FROM Status WHERE name = 'Создана'");
-        const statusId = status.recordset[0]?.status_id || 1;
+        const status = await pool.query("SELECT status_id FROM Status WHERE name = 'Создана'");
+        const statusId = status.rows[0]?.status_id || 1;
 
-        // Get next ID
-        const maxIdResult = await pool.request()
-            .query('SELECT ISNULL(MAX(task_id), 0) + 1 as next_id FROM Task');
-        const nextId = maxIdResult.recordset[0].next_id;
-
-        await pool.request()
-            .input('task_id', sql.Int, nextId)
-            .input('project_id', sql.Int, project_id)
-            .input('status_id', sql.Int, statusId)
-            .input('name', sql.VarChar, name)
-            .input('description', sql.VarChar, description || '')
-            .input('priority', sql.Int, priority)
-            .input('start_plan', sql.DateTime, new Date(start_plan))
-            .input('end_plan', sql.DateTime, new Date(end_plan))
-            .input('effort_plan', sql.Float, effort_plan)
-            .query(`INSERT INTO Task (task_id, project_id, status_id, name, description, priority, start_plan, end_plan, effort_plan)
-                    VALUES (@task_id, @project_id, @status_id, @name, @description, @priority, @start_plan, @end_plan, @effort_plan)`);
+        const result = await pool.query(
+            `INSERT INTO Task (project_id, status_id, name, description, priority, start_plan, end_plan, effort_plan)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             RETURNING task_id`,
+            [project_id, statusId, name, description || '', priority, new Date(start_plan), new Date(end_plan), effort_plan]
+        );
 
         res.status(201).json({
             message: 'Задача успешно создана',
-            task_id: nextId
+            task_id: result.rows[0].task_id
         });
     } catch (err) {
         console.error('Create task error:', err);
@@ -198,22 +194,23 @@ router.put('/:id', authenticateToken, async (req, res) => {
         const pool = await getPool();
 
         // Check if task exists
-        const existing = await pool.request()
-            .input('task_id', sql.Int, req.params.id)
-            .query('SELECT task_id, project_id FROM Task WHERE task_id = @task_id');
+        const existing = await pool.query(
+            'SELECT task_id, project_id FROM Task WHERE task_id = $1',
+            [req.params.id]
+        );
 
-        if (existing.recordset.length === 0) {
+        if (existing.rows.length === 0) {
             return res.status(404).json({ error: 'Задача не найдена' });
         }
 
         // If user is Исполнитель, check if they are assigned to this task
         if (req.user.role === 'Исполнитель') {
-            const assignment = await pool.request()
-                .input('task_id', sql.Int, req.params.id)
-                .input('employee_id', sql.Int, req.user.employee_id)
-                .query('SELECT assignment_id FROM Assignment WHERE task_id = @task_id AND employee_id = @employee_id');
+            const assignment = await pool.query(
+                'SELECT assignment_id FROM Assignment WHERE task_id = $1 AND employee_id = $2',
+                [req.params.id, req.user.employee_id]
+            );
 
-            if (assignment.recordset.length === 0) {
+            if (assignment.rows.length === 0) {
                 return res.status(403).json({ error: 'Доступ запрещён' });
             }
 
@@ -226,57 +223,66 @@ router.put('/:id', authenticateToken, async (req, res) => {
 
         const { name, description, priority, start_plan, end_plan, effort_plan, start_actual, end_actual, status_id } = req.body;
 
-        let updateQuery = 'UPDATE Task SET ';
         const updates = [];
-        const request = pool.request();
-        request.input('task_id', sql.Int, req.params.id);
+        const params = [];
+        let paramIndex = 1;
 
         if (name !== undefined) {
             if (!name.trim()) {
                 return res.status(400).json({ error: 'Название задачи не может быть пустым' });
             }
-            updates.push('name = @name');
-            request.input('name', sql.VarChar, name);
+            updates.push(`name = $${paramIndex}`);
+            params.push(name);
+            paramIndex++;
         }
         if (description !== undefined) {
-            updates.push('description = @description');
-            request.input('description', sql.VarChar, description);
+            updates.push(`description = $${paramIndex}`);
+            params.push(description);
+            paramIndex++;
         }
         if (priority !== undefined) {
-            updates.push('priority = @priority');
-            request.input('priority', sql.Int, priority);
+            updates.push(`priority = $${paramIndex}`);
+            params.push(priority);
+            paramIndex++;
         }
         if (start_plan !== undefined) {
-            updates.push('start_plan = @start_plan');
-            request.input('start_plan', sql.DateTime, new Date(start_plan));
+            updates.push(`start_plan = $${paramIndex}`);
+            params.push(new Date(start_plan));
+            paramIndex++;
         }
         if (end_plan !== undefined) {
-            updates.push('end_plan = @end_plan');
-            request.input('end_plan', sql.DateTime, new Date(end_plan));
+            updates.push(`end_plan = $${paramIndex}`);
+            params.push(new Date(end_plan));
+            paramIndex++;
         }
         if (effort_plan !== undefined) {
-            updates.push('effort_plan = @effort_plan');
-            request.input('effort_plan', sql.Float, effort_plan);
+            updates.push(`effort_plan = $${paramIndex}`);
+            params.push(effort_plan);
+            paramIndex++;
         }
         if (start_actual !== undefined) {
-            updates.push('start_actual = @start_actual');
-            request.input('start_actual', sql.DateTime, start_actual ? new Date(start_actual) : null);
+            updates.push(`start_actual = $${paramIndex}`);
+            params.push(start_actual ? new Date(start_actual) : null);
+            paramIndex++;
         }
         if (end_actual !== undefined) {
-            updates.push('end_actual = @end_actual');
-            request.input('end_actual', sql.DateTime, end_actual ? new Date(end_actual) : null);
+            updates.push(`end_actual = $${paramIndex}`);
+            params.push(end_actual ? new Date(end_actual) : null);
+            paramIndex++;
         }
         if (status_id !== undefined) {
-            updates.push('status_id = @status_id');
-            request.input('status_id', sql.Int, status_id);
+            updates.push(`status_id = $${paramIndex}`);
+            params.push(status_id);
+            paramIndex++;
         }
 
         if (updates.length === 0) {
             return res.status(400).json({ error: 'Нет данных для обновления' });
         }
 
-        updateQuery += updates.join(', ') + ' WHERE task_id = @task_id';
-        await request.query(updateQuery);
+        params.push(req.params.id);
+        const updateQuery = `UPDATE Task SET ${updates.join(', ')} WHERE task_id = $${paramIndex}`;
+        await pool.query(updateQuery, params);
 
         res.json({ message: 'Задача обновлена' });
     } catch (err) {
@@ -297,51 +303,52 @@ router.patch('/:id/status', authenticateToken, async (req, res) => {
         const pool = await getPool();
 
         // Check if task exists
-        const existing = await pool.request()
-            .input('task_id', sql.Int, req.params.id)
-            .query('SELECT task_id FROM Task WHERE task_id = @task_id');
+        const existing = await pool.query(
+            'SELECT task_id FROM Task WHERE task_id = $1',
+            [req.params.id]
+        );
 
-        if (existing.recordset.length === 0) {
+        if (existing.rows.length === 0) {
             return res.status(404).json({ error: 'Задача не найдена' });
         }
 
         // If user is Исполнитель, check if they are assigned
         if (req.user.role === 'Исполнитель') {
-            const assignment = await pool.request()
-                .input('task_id', sql.Int, req.params.id)
-                .input('employee_id', sql.Int, req.user.employee_id)
-                .query('SELECT assignment_id FROM Assignment WHERE task_id = @task_id AND employee_id = @employee_id');
+            const assignment = await pool.query(
+                'SELECT assignment_id FROM Assignment WHERE task_id = $1 AND employee_id = $2',
+                [req.params.id, req.user.employee_id]
+            );
 
-            if (assignment.recordset.length === 0) {
+            if (assignment.rows.length === 0) {
                 return res.status(403).json({ error: 'Доступ запрещён' });
             }
         }
 
         // Check if status exists
-        const status = await pool.request()
-            .input('status_id', sql.Int, status_id)
-            .query('SELECT status_id, name FROM Status WHERE status_id = @status_id');
+        const status = await pool.query(
+            'SELECT status_id, name FROM Status WHERE status_id = $1',
+            [status_id]
+        );
 
-        if (status.recordset.length === 0) {
+        if (status.rows.length === 0) {
             return res.status(404).json({ error: 'Статус не найден' });
         }
 
         // Update status and set actual dates if needed
-        const statusName = status.recordset[0].name;
-        let updateQuery = 'UPDATE Task SET status_id = @status_id';
+        const statusName = status.rows[0].name;
+        let updateQuery = 'UPDATE Task SET status_id = $1';
+        const params = [status_id];
 
         if (statusName === 'В работе') {
-            updateQuery += ', start_actual = ISNULL(start_actual, GETDATE())';
+            updateQuery += ', start_actual = COALESCE(start_actual, NOW())';
         } else if (statusName === 'Завершена') {
-            updateQuery += ', end_actual = GETDATE()';
+            updateQuery += ', end_actual = NOW()';
         }
 
-        updateQuery += ' WHERE task_id = @task_id';
+        updateQuery += ' WHERE task_id = $2';
+        params.push(req.params.id);
 
-        await pool.request()
-            .input('task_id', sql.Int, req.params.id)
-            .input('status_id', sql.Int, status_id)
-            .query(updateQuery);
+        await pool.query(updateQuery, params);
 
         res.json({ message: 'Статус задачи изменён' });
     } catch (err) {
@@ -356,19 +363,22 @@ router.delete('/:id', authenticateToken, requireManager, async (req, res) => {
         const pool = await getPool();
 
         // Delete related records first
-        await pool.request()
-            .input('task_id', sql.Int, req.params.id)
-            .query(`DELETE FROM Time_entry WHERE assignment_id IN (SELECT assignment_id FROM Assignment WHERE task_id = @task_id)`);
+        await pool.query(
+            `DELETE FROM Time_entry WHERE assignment_id IN (SELECT assignment_id FROM Assignment WHERE task_id = $1)`,
+            [req.params.id]
+        );
 
-        await pool.request()
-            .input('task_id', sql.Int, req.params.id)
-            .query('DELETE FROM Assignment WHERE task_id = @task_id');
+        await pool.query(
+            'DELETE FROM Assignment WHERE task_id = $1',
+            [req.params.id]
+        );
 
-        const result = await pool.request()
-            .input('task_id', sql.Int, req.params.id)
-            .query('DELETE FROM Task WHERE task_id = @task_id');
+        const result = await pool.query(
+            'DELETE FROM Task WHERE task_id = $1',
+            [req.params.id]
+        );
 
-        if (result.rowsAffected[0] === 0) {
+        if (result.rowCount === 0) {
             return res.status(404).json({ error: 'Задача не найдена' });
         }
 

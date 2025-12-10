@@ -1,42 +1,32 @@
-const sql = require('mssql');
+const { Pool } = require('pg');
 
-const config = {
-    server: process.env.DB_SERVER || 'localhost',
-    database: process.env.DB_NAME || 'KSUP_DB',
-    user: process.env.DB_USER || 'sa',
-    password: process.env.DB_PASSWORD || 'YOUR_PASSWORD',
-    options: {
-        encrypt: false,
-        trustServerCertificate: true,
-        enableArithAbort: true
-    },
-    port: parseInt(process.env.DB_PORT) || 1433,
-    pool: {
-        max: 10,
-        min: 0,
-        idleTimeoutMillis: 30000
-    }
-};
-
-let pool = null;
+const pool = new Pool({
+    host: process.env.DB_SERVER || 'localhost',
+    database: process.env.DB_NAME || 'ksup_db',
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD || 'root',
+    port: parseInt(process.env.DB_PORT) || 5432,
+    max: 10,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
+});
 
 async function getPool() {
-    if (!pool) {
-        pool = await sql.connect(config);
-    }
     return pool;
 }
 
 async function closePool() {
-    if (pool) {
-        await pool.close();
-        pool = null;
-    }
+    await pool.end();
 }
 
+// Test connection
+pool.on('error', (err) => {
+    console.error('Unexpected error on idle client', err);
+    process.exit(-1);
+});
+
 module.exports = {
-    sql,
-    config,
+    pool,
     getPool,
     closePool
 };

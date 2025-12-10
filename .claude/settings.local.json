@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cp:*)",
+      "Bash(node --version)",
+      "Bash(npm:*)",
+      "Bash(set:*)",
+      "Bash(psql:*)",
+      "Bash(where:*)",
+      "Bash(dir \"C:\\Program Files\\PostgreSQL\")",
+      "Bash(\"C:\\Program Files\\PostgreSQL\\18\\bin\\psql.exe\" -U postgres -h localhost -c \"SELECT version();\")",
+      "Bash(cmd /c \"set PGPASSWORD=root && \"\"C:\\Program Files\\PostgreSQL\\18\\bin\\psql.exe\"\" -U postgres -h localhost -c \"\"CREATE DATABASE ksup_db;\"\"\")",
+      "Bash(cmd /c \"set PGPASSWORD=root && \"\"C:\\Program Files\\PostgreSQL\\18\\bin\\psql.exe\"\" -U postgres -h localhost -l\")",
+      "Bash(export PGPASSWORD=root:*)",
+      "Bash(\"/c/Program Files/PostgreSQL/18/bin/psql.exe\" -U postgres -h localhost -c \"SELECT datname FROM pg_database;\")",
+      "Bash(\"/c/Program Files/PostgreSQL/18/bin/psql.exe\" -U postgres -h localhost -c \"CREATE DATABASE ksup_db;\")",
+      "Bash(\"/c/Program Files/PostgreSQL/18/bin/psql.exe\" -U postgres -h localhost -d ksup_db -f \"C:/Users/OwnerArtem/Desktop/Сдать/ksup/ksup/database/schema.sql\")",
+      "Bash(\"/c/Program Files/PostgreSQL/18/bin/psql.exe\" -U postgres -h localhost -d ksup_db -f \"C:/Users/OwnerArtem/Desktop/Сдать/ksup/ksup/database/seed.sql\")"
+    ]
+  }
+}

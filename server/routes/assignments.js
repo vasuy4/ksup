@@ -1,22 +1,23 @@
 const express = require('express');
 const router = express.Router();
 const { body, validationResult } = require('express-validator');
-const { getPool, sql } = require('../config/database');
+const { getPool } = require('../config/database');
 const { authenticateToken, requireManager } = require('../middleware/auth');
 
 // Get all assignments for a task
 router.get('/task/:taskId', authenticateToken, async (req, res) => {
     try {
         const pool = await getPool();
-        const result = await pool.request()
-            .input('task_id', sql.Int, req.params.taskId)
-            .query(`SELECT a.*, e.fio, e.email, e.phone
-                FROM Assignment a
-                JOIN Employee e ON a.employee_id = e.employee_id
-                WHERE a.task_id = @task_id
-                ORDER BY a.date_from`);
+        const result = await pool.query(
+            `SELECT a.*, e.fio, e.email, e.phone
+             FROM Assignment a
+             JOIN Employee e ON a.employee_id = e.employee_id
+             WHERE a.task_id = $1
+             ORDER BY a.date_from`,
+            [req.params.taskId]
+        );
 
-        res.json(result.recordset);
+        res.json(result.rows);
     } catch (err) {
         console.error('Get assignments error:', err);
         res.status(500).json({ error: 'Ошибка получения назначений' });
@@ -27,17 +28,18 @@ router.get('/task/:taskId', authenticateToken, async (req, res) => {
 router.get('/employee/:employeeId', authenticateToken, async (req, res) => {
     try {
         const pool = await getPool();
-        const result = await pool.request()
-            .input('employee_id', sql.Int, req.params.employeeId)
-            .query(`SELECT a.*, t.name as task_name, p.name as project_name, s.name as status_name
-                FROM Assignment a
-                JOIN Task t ON a.task_id = t.task_id
-                JOIN Project p ON t.project_id = p.project_id
-                LEFT JOIN Status s ON t.status_id = s.status_id
-                WHERE a.employee_id = @employee_id
-                ORDER BY a.date_from DESC`);
+        const result = await pool.query(
+            `SELECT a.*, t.name as task_name, p.name as project_name, s.name as status_name
+             FROM Assignment a
+             JOIN Task t ON a.task_id = t.task_id
+             JOIN Project p ON t.project_id = p.project_id
+             LEFT JOIN Status s ON t.status_id = s.status_id
+             WHERE a.employee_id = $1
+             ORDER BY a.date_from DESC`,
+            [req.params.employeeId]
+        );
 
-        res.json(result.recordset);
+        res.json(result.rows);
     } catch (err) {
         console.error('Get employee assignments error:', err);
         res.status(500).json({ error: 'Ошибка получения назначений сотрудника' });
@@ -48,20 +50,21 @@ router.get('/employee/:employeeId', authenticateToken, async (req, res) => {
 router.get('/my', authenticateToken, async (req, res) => {
     try {
         const pool = await getPool();
-        const result = await pool.request()
-            .input('employee_id', sql.Int, req.user.employee_id)
-            .query(`SELECT a.*, t.name as task_name, t.description as task_description,
+        const result = await pool.query(
+            `SELECT a.*, t.name as task_name, t.description as task_description,
                     t.priority, t.start_plan, t.end_plan, t.effort_plan,
                     p.name as project_name, s.name as status_name,
-                    (SELECT ISNULL(SUM(te.hours), 0) FROM Time_entry te WHERE te.assignment_id = a.assignment_id) as hours_spent
-                FROM Assignment a
-                JOIN Task t ON a.task_id = t.task_id
-                JOIN Project p ON t.project_id = p.project_id
-                LEFT JOIN Status s ON t.status_id = s.status_id
-                WHERE a.employee_id = @employee_id
-                ORDER BY t.priority DESC, a.date_from`);
+                    (SELECT COALESCE(SUM(te.hours), 0) FROM Time_entry te WHERE te.assignment_id = a.assignment_id) as hours_spent
+             FROM Assignment a
+             JOIN Task t ON a.task_id = t.task_id
+             JOIN Project p ON t.project_id = p.project_id
+             LEFT JOIN Status s ON t.status_id = s.status_id
+             WHERE a.employee_id = $1
+             ORDER BY t.priority DESC, a.date_from`,
+            [req.user.employee_id]
+        );
 
-        res.json(result.recordset);
+        res.json(result.rows);
     } catch (err) {
         console.error('Get my assignments error:', err);
         res.status(500).json({ error: 'Ошибка получения ваших назначений' });
@@ -88,53 +91,45 @@ router.post('/', authenticateToken, requireManager, [
         const pool = await getPool();
 
         // Check if employee exists and is active
-        const employee = await pool.request()
-            .input('employee_id', sql.Int, employee_id)
-            .query('SELECT employee_id FROM Employee WHERE employee_id = @employee_id AND active = 1');
+        const employee = await pool.query(
+            'SELECT employee_id FROM Employee WHERE employee_id = $1 AND active = TRUE',
+            [employee_id]
+        );
 
-        if (employee.recordset.length === 0) {
+        if (employee.rows.length === 0) {
             return res.status(404).json({ error: 'Сотрудник не найден или неактивен' });
         }
 
         // Check if task exists
-        const task = await pool.request()
-            .input('task_id', sql.Int, task_id)
-            .query('SELECT task_id FROM Task WHERE task_id = @task_id');
+        const task = await pool.query(
+            'SELECT task_id FROM Task WHERE task_id = $1',
+            [task_id]
+        );
 
-        if (task.recordset.length === 0) {
+        if (task.rows.length === 0) {
             return res.status(404).json({ error: 'Задача не найдена' });
         }
 
         // Check for existing assignment
-        const existing = await pool.request()
-            .input('employee_id', sql.Int, employee_id)
-            .input('task_id', sql.Int, task_id)
-            .query('SELECT assignment_id FROM Assignment WHERE employee_id = @employee_id AND task_id = @task_id');
+        const existing = await pool.query(
+            'SELECT assignment_id FROM Assignment WHERE employee_id = $1 AND task_id = $2',
+            [employee_id, task_id]
+        );
 
-        if (existing.recordset.length > 0) {
+        if (existing.rows.length > 0) {
             return res.status(400).json({ error: 'Сотрудник уже назначен на эту задачу' });
         }
 
-        // Get next ID
-        const maxIdResult = await pool.request()
-            .query('SELECT ISNULL(MAX(assignment_id), 0) + 1 as next_id FROM Assignment');
-        const nextId = maxIdResult.recordset[0].next_id;
-
-        await pool.request()
-            .input('assignment_id', sql.Int, nextId)
-            .input('employee_id', sql.Int, employee_id)
-            .input('task_id', sql.Int, task_id)
-            .input('role_on_task', sql.VarChar, role_on_task)
-            .input('allocation_pct', sql.Int, allocation_pct)
-            .input('hourly_rate', sql.Decimal, hourly_rate)
-            .input('date_from', sql.DateTime, new Date(date_from))
-            .input('date_to', sql.DateTime, new Date(date_to))
-            .query(`INSERT INTO Assignment (assignment_id, employee_id, task_id, role_on_task, allocation_pct, hourly_rate, date_from, date_to)
-                    VALUES (@assignment_id, @employee_id, @task_id, @role_on_task, @allocation_pct, @hourly_rate, @date_from, @date_to)`);
+        const result = await pool.query(
+            `INSERT INTO Assignment (employee_id, task_id, role_on_task, allocation_pct, hourly_rate, date_from, date_to)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING assignment_id`,
+            [employee_id, task_id, role_on_task, allocation_pct, hourly_rate, new Date(date_from), new Date(date_to)]
+        );
 
         res.status(201).json({
             message: 'Назначение создано',
-            assignment_id: nextId
+            assignment_id: result.rows[0].assignment_id
         });
     } catch (err) {
         console.error('Create assignment error:', err);
@@ -149,46 +144,52 @@ router.put('/:id', authenticateToken, requireManager, async (req, res) => {
         const pool = await getPool();
 
         // Check if assignment exists
-        const existing = await pool.request()
-            .input('assignment_id', sql.Int, req.params.id)
-            .query('SELECT assignment_id FROM Assignment WHERE assignment_id = @assignment_id');
+        const existing = await pool.query(
+            'SELECT assignment_id FROM Assignment WHERE assignment_id = $1',
+            [req.params.id]
+        );
 
-        if (existing.recordset.length === 0) {
+        if (existing.rows.length === 0) {
             return res.status(404).json({ error: 'Назначение не найдено' });
         }
 
-        let updateQuery = 'UPDATE Assignment SET ';
         const updates = [];
-        const request = pool.request();
-        request.input('assignment_id', sql.Int, req.params.id);
+        const params = [];
+        let paramIndex = 1;
 
         if (role_on_task !== undefined) {
-            updates.push('role_on_task = @role_on_task');
-            request.input('role_on_task', sql.VarChar, role_on_task);
+            updates.push(`role_on_task = $${paramIndex}`);
+            params.push(role_on_task);
+            paramIndex++;
         }
         if (allocation_pct !== undefined) {
-            updates.push('allocation_pct = @allocation_pct');
-            request.input('allocation_pct', sql.Int, allocation_pct);
+            updates.push(`allocation_pct = $${paramIndex}`);
+            params.push(allocation_pct);
+            paramIndex++;
         }
         if (hourly_rate !== undefined) {
-            updates.push('hourly_rate = @hourly_rate');
-            request.input('hourly_rate', sql.Decimal, hourly_rate);
+            updates.push(`hourly_rate = $${paramIndex}`);
+            params.push(hourly_rate);
+            paramIndex++;
         }
         if (date_from !== undefined) {
-            updates.push('date_from = @date_from');
-            request.input('date_from', sql.DateTime, new Date(date_from));
+            updates.push(`date_from = $${paramIndex}`);
+            params.push(new Date(date_from));
+            paramIndex++;
         }
         if (date_to !== undefined) {
-            updates.push('date_to = @date_to');
-            request.input('date_to', sql.DateTime, new Date(date_to));
+            updates.push(`date_to = $${paramIndex}`);
+            params.push(new Date(date_to));
+            paramIndex++;
         }
 
         if (updates.length === 0) {
             return res.status(400).json({ error: 'Нет данных для обновления' });
         }
 
-        updateQuery += updates.join(', ') + ' WHERE assignment_id = @assignment_id';
-        await request.query(updateQuery);
+        params.push(req.params.id);
+        const updateQuery = `UPDATE Assignment SET ${updates.join(', ')} WHERE assignment_id = $${paramIndex}`;
+        await pool.query(updateQuery, params);
 
         res.json({ message: 'Назначение обновлено' });
     } catch (err) {
@@ -203,15 +204,17 @@ router.delete('/:id', authenticateToken, requireManager, async (req, res) => {
         const pool = await getPool();
 
         // Delete related time entries first
-        await pool.request()
-            .input('assignment_id', sql.Int, req.params.id)
-            .query('DELETE FROM Time_entry WHERE assignment_id = @assignment_id');
+        await pool.query(
+            'DELETE FROM Time_entry WHERE assignment_id = $1',
+            [req.params.id]
+        );
 
-        const result = await pool.request()
-            .input('assignment_id', sql.Int, req.params.id)
-            .query('DELETE FROM Assignment WHERE assignment_id = @assignment_id');
+        const result = await pool.query(
+            'DELETE FROM Assignment WHERE assignment_id = $1',
+            [req.params.id]
+        );
 
-        if (result.rowsAffected[0] === 0) {
+        if (result.rowCount === 0) {
             return res.status(404).json({ error: 'Назначение не найдено' });
         }
 

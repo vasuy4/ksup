@@ -12,7 +12,7 @@ const assignmentRoutes = require('./routes/assignments');
 const timeEntryRoutes = require('./routes/timeEntries');
 const reportRoutes = require('./routes/reports');
 
-const { getPool } = require('./config/database');
+const { pool } = require('./config/database');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -52,8 +52,8 @@ app.use((err, req, res, next) => {
 // Initialize database connection and start server
 async function startServer() {
     try {
-        await getPool();
-        console.log('Connected to SQL Server database');
+        const result = await pool.query('SELECT NOW()');
+        console.log('Connected to PostgreSQL database at:', result.rows[0].now);
 
         app.listen(PORT, () => {
             console.log(`Server is running on port ${PORT}`);

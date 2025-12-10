@@ -7,10 +7,9 @@ const { authenticateToken } = require('../middleware/auth');
 router.get('/', authenticateToken, async (req, res) => {
     try {
         const pool = await getPool();
-        const result = await pool.request()
-            .query('SELECT * FROM Status ORDER BY status_id');
+        const result = await pool.query('SELECT * FROM Status ORDER BY status_id');
 
-        res.json(result.recordset);
+        res.json(result.rows);
     } catch (err) {
         console.error('Get statuses error:', err);
         res.status(500).json({ error: 'Ошибка получения списка статусов' });
