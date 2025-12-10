@@ -29,13 +29,13 @@ INSERT INTO Status (name) VALUES
 
 -- Insert employees
 -- Password for all users: 123456
--- Hash: $2a$10$8K1p/a0dL1LXMIgoEDFrwOfMQHLVaFvAqNWKwLpxiQ.xm9SIBwzaW
+-- Hash: $2b$10$D2ApdLeQfLlMYSOxe0rCceOsKCdBw.mr3JSAljw2ReUi1oW09vLqi
 INSERT INTO Employee (fio, email, phone, hire_date, active, role, password_hash) VALUES
-('Иванов Иван Иванович', 'ivanov@chizh.ru', '79001234567', '2020-01-15', TRUE, 'Руководитель', '$2a$10$8K1p/a0dL1LXMIgoEDFrwOfMQHLVaFvAqNWKwLpxiQ.xm9SIBwzaW'),
-('Петрова Мария Сергеевна', 'petrova@chizh.ru', '79002345678', '2021-03-01', TRUE, 'PM', '$2a$10$8K1p/a0dL1LXMIgoEDFrwOfMQHLVaFvAqNWKwLpxiQ.xm9SIBwzaW'),
-('Сидоров Алексей Петрович', 'sidorov@chizh.ru', '79003456789', '2022-06-10', TRUE, 'Исполнитель', '$2a$10$8K1p/a0dL1LXMIgoEDFrwOfMQHLVaFvAqNWKwLpxiQ.xm9SIBwzaW'),
-('Козлова Анна Владимировна', 'kozlova@chizh.ru', '79004567890', '2022-09-15', TRUE, 'Исполнитель', '$2a$10$8K1p/a0dL1LXMIgoEDFrwOfMQHLVaFvAqNWKwLpxiQ.xm9SIBwzaW'),
-('Морозов Дмитрий Николаевич', 'morozov@chizh.ru', '79005678901', '2023-01-20', TRUE, 'PM', '$2a$10$8K1p/a0dL1LXMIgoEDFrwOfMQHLVaFvAqNWKwLpxiQ.xm9SIBwzaW');
+('Иванов Иван Иванович', 'ivanov@chizh.ru', '79001234567', '2020-01-15', TRUE, 'Руководитель', '$2b$10$D2ApdLeQfLlMYSOxe0rCceOsKCdBw.mr3JSAljw2ReUi1oW09vLqi'),
+('Петрова Мария Сергеевна', 'petrova@chizh.ru', '79002345678', '2021-03-01', TRUE, 'PM', '$2b$10$D2ApdLeQfLlMYSOxe0rCceOsKCdBw.mr3JSAljw2ReUi1oW09vLqi'),
+('Сидоров Алексей Петрович', 'sidorov@chizh.ru', '79003456789', '2022-06-10', TRUE, 'Исполнитель', '$2b$10$D2ApdLeQfLlMYSOxe0rCceOsKCdBw.mr3JSAljw2ReUi1oW09vLqi'),
+('Козлова Анна Владимировна', 'kozlova@chizh.ru', '79004567890', '2022-09-15', TRUE, 'Исполнитель', '$2b$10$D2ApdLeQfLlMYSOxe0rCceOsKCdBw.mr3JSAljw2ReUi1oW09vLqi'),
+('Морозов Дмитрий Николаевич', 'morozov@chizh.ru', '79005678901', '2023-01-20', TRUE, 'PM', '$2b$10$D2ApdLeQfLlMYSOxe0rCceOsKCdBw.mr3JSAljw2ReUi1oW09vLqi');
 
 -- Insert projects
 INSERT INTO Project (name, description, budget_plan, budget_fact, start_plan, end_plan, start_actual, priority, is_archived) VALUES
