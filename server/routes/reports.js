@@ -13,6 +13,11 @@ if (!fs.existsSync(reportsDir)) {
     fs.mkdirSync(reportsDir, { recursive: true });
 }
 
+// Font paths for Cyrillic support
+const fontsDir = path.join(__dirname, '..', 'fonts');
+const fontRegular = path.join(fontsDir, 'Roboto-Regular.ttf');
+const fontBold = path.join(fontsDir, 'Roboto-Bold.ttf');
+
 // Get project report data
 router.get('/project/:projectId', authenticateToken, async (req, res) => {
     try {
@@ -162,8 +167,12 @@ router.get('/project/:projectId/pdf', authenticateToken, async (req, res) => {
         const stats = taskStats.rows[0];
         const effortFact = effortResult.rows[0].effort_fact_total;
 
-        // Create PDF
+        // Create PDF with custom font for Cyrillic support
         const doc = new PDFDocument({ margin: 50 });
+
+        // Register fonts for Cyrillic support
+        doc.registerFont('Roboto', fontRegular);
+        doc.registerFont('Roboto-Bold', fontBold);
 
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename=project_${project.project_id}_report.pdf`);
@@ -171,20 +180,20 @@ router.get('/project/:projectId/pdf', authenticateToken, async (req, res) => {
         doc.pipe(res);
 
         // Title
-        doc.fontSize(20).text('Отчёт по проекту', { align: 'center' });
+        doc.font('Roboto-Bold').fontSize(20).text('Отчёт по проекту', { align: 'center' });
         doc.moveDown();
 
         // Project info
-        doc.fontSize(16).text(project.name);
+        doc.font('Roboto-Bold').fontSize(16).text(project.name);
         doc.moveDown(0.5);
-        doc.fontSize(12).text(`Описание: ${project.description || 'Не указано'}`);
+        doc.font('Roboto').fontSize(12).text(`Описание: ${project.description || 'Не указано'}`);
         doc.text(`Приоритет: ${project.priority}`);
         doc.text(`Статус: ${project.is_archived ? 'Архивирован' : 'Активен'}`);
         doc.moveDown();
 
         // Dates
-        doc.fontSize(14).text('Сроки проекта');
-        doc.fontSize(12);
+        doc.font('Roboto-Bold').fontSize(14).text('Сроки проекта');
+        doc.font('Roboto').fontSize(12);
         doc.text(`План. начало: ${new Date(project.start_plan).toLocaleDateString('ru-RU')}`);
         doc.text(`План. окончание: ${new Date(project.end_plan).toLocaleDateString('ru-RU')}`);
         if (project.start_actual) {
@@ -196,8 +205,8 @@ router.get('/project/:projectId/pdf', authenticateToken, async (req, res) => {
         doc.moveDown();
 
         // Budget
-        doc.fontSize(14).text('Бюджет');
-        doc.fontSize(12);
+        doc.font('Roboto-Bold').fontSize(14).text('Бюджет');
+        doc.font('Roboto').fontSize(12);
         doc.text(`Плановый бюджет: ${parseFloat(project.budget_plan).toLocaleString('ru-RU')} руб.`);
         doc.text(`Фактический бюджет: ${parseFloat(project.budget_fact).toLocaleString('ru-RU')} руб.`);
         const budgetDiff = parseFloat(project.budget_plan) - parseFloat(project.budget_fact);
@@ -205,8 +214,8 @@ router.get('/project/:projectId/pdf', authenticateToken, async (req, res) => {
         doc.moveDown();
 
         // Task statistics
-        doc.fontSize(14).text('Статистика задач');
-        doc.fontSize(12);
+        doc.font('Roboto-Bold').fontSize(14).text('Статистика задач');
+        doc.font('Roboto').fontSize(12);
         doc.text(`Всего задач: ${stats.total_tasks}`);
         doc.text(`Создано: ${stats.new_tasks}`);
         doc.text(`В работе: ${stats.in_progress_tasks}`);
@@ -215,8 +224,8 @@ router.get('/project/:projectId/pdf', authenticateToken, async (req, res) => {
         doc.moveDown();
 
         // Effort
-        doc.fontSize(14).text('Трудозатраты');
-        doc.fontSize(12);
+        doc.font('Roboto-Bold').fontSize(14).text('Трудозатраты');
+        doc.font('Roboto').fontSize(12);
         doc.text(`Плановые трудозатраты: ${stats.effort_plan_total} ч.`);
         doc.text(`Фактические трудозатраты: ${effortFact} ч.`);
         const effortDiff = parseFloat(stats.effort_plan_total) - parseFloat(effortFact);
@@ -224,7 +233,7 @@ router.get('/project/:projectId/pdf', authenticateToken, async (req, res) => {
 
         // Footer
         doc.moveDown(2);
-        doc.fontSize(10).text(`Отчёт сформирован: ${new Date().toLocaleString('ru-RU')}`, { align: 'right' });
+        doc.font('Roboto').fontSize(10).text(`Отчёт сформирован: ${new Date().toLocaleString('ru-RU')}`, { align: 'right' });
 
         doc.end();
     } catch (err) {

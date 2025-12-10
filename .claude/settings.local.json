@@ -15,7 +15,8 @@
       "Bash(\"/c/Program Files/PostgreSQL/18/bin/psql.exe\" -U postgres -h localhost -c \"SELECT datname FROM pg_database;\")",
       "Bash(\"/c/Program Files/PostgreSQL/18/bin/psql.exe\" -U postgres -h localhost -c \"CREATE DATABASE ksup_db;\")",
       "Bash(\"/c/Program Files/PostgreSQL/18/bin/psql.exe\" -U postgres -h localhost -d ksup_db -f \"C:/Users/OwnerArtem/Desktop/Сдать/ksup/ksup/database/schema.sql\")",
-      "Bash(\"/c/Program Files/PostgreSQL/18/bin/psql.exe\" -U postgres -h localhost -d ksup_db -f \"C:/Users/OwnerArtem/Desktop/Сдать/ksup/ksup/database/seed.sql\")"
+      "Bash(\"/c/Program Files/PostgreSQL/18/bin/psql.exe\" -U postgres -h localhost -d ksup_db -f \"C:/Users/OwnerArtem/Desktop/Сдать/ksup/ksup/database/seed.sql\")",
+      "Bash(curl:*)"
     ]
   }
 }
